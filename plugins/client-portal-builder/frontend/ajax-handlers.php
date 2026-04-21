@@ -1398,7 +1398,7 @@ function cpp_pricing_signup_handler() {
             $status = 'trial';
             $next_bill = date('Y-m-d', strtotime('+7 days'));
         } else {
-            $status = 'active';
+            $status = 'pending_payment';
             $next_bill = $billing === 'yearly' ? date('Y-m-d', strtotime('+1 year')) : date('Y-m-d', strtotime('+1 month'));
         }
         $wpdb->insert($sub_table, array(
@@ -1425,11 +1425,119 @@ function cpp_pricing_signup_handler() {
     }
     $_SESSION['cpp_active_client_id'] = $client_id;
 
+    // For paid signups, create WHMCS order and redirect to payment
+    if (!$is_trial && class_exists('BC_API') && method_exists('BC_API', 'call')) {
+        $payment_url = cpp_create_whmcs_order($user_id, $plan_key, $billing, $price, $first_name, $last_name, $email, $password);
+        if ($payment_url && !is_wp_error($payment_url)) {
+            wp_send_json_success(array(
+                'message'  => 'Redirecting to payment...',
+                'redirect' => $payment_url,
+            ));
+        }
+    }
+
+    // Trial or WHMCS fallback - redirect to portal
     $portal_url = home_url('/mybriefcase/');
     wp_send_json_success(array(
         'message'  => $is_trial ? 'Trial started!' : 'Account created!',
         'redirect' => $portal_url,
     ));
+}
+
+/**
+ * Create WHMCS client + order and return payment URL
+ */
+function cpp_create_whmcs_order($user_id, $plan_key, $billing, $price, $first_name, $last_name, $email, $password) {
+    // Get WHMCS product ID mapped to this plan
+    $product_map = get_option('cpp_whmcs_product_map', array());
+    $whmcs_product_id = 0;
+    foreach ($product_map as $pid => $mapped_plan) {
+        if (strtolower($mapped_plan) === strtolower($plan_key)) {
+            $whmcs_product_id = intval($pid);
+            break;
+        }
+    }
+    if (!$whmcs_product_id) {
+        error_log('BriefSync: No WHMCS product mapped for plan: ' . $plan_key);
+        return new WP_Error('no_product', 'No WHMCS product mapped for this plan');
+    }
+
+    // Check if user already has a WHMCS client ID
+    $whmcs_client_id = get_user_meta($user_id, 'whmcs_client_id', true);
+
+    if (empty($whmcs_client_id)) {
+        // Create WHMCS client
+        $client_result = BC_API::call('AddClient', array(
+            'firstname' => $first_name,
+            'lastname'  => $last_name,
+            'email'     => $email,
+            'password2' => $password,
+            'address1'  => 'N/A',
+            'city'      => 'N/A',
+            'state'     => 'N/A',
+            'postcode'  => '00000',
+            'country'   => 'US',
+            'phonenumber' => '0000000000',
+        ));
+
+        if (is_wp_error($client_result)) {
+            error_log('BriefSync: WHMCS AddClient failed: ' . $client_result->get_error_message());
+            return $client_result;
+        }
+
+        if (isset($client_result['clientid'])) {
+            $whmcs_client_id = intval($client_result['clientid']);
+            update_user_meta($user_id, 'whmcs_client_id', $whmcs_client_id);
+        } else {
+            error_log('BriefSync: WHMCS AddClient no clientid in response');
+            return new WP_Error('whmcs_error', 'Failed to create WHMCS client');
+        }
+    }
+
+    // Map billing cycle to WHMCS format
+    $whmcs_cycle = ($billing === 'yearly') ? 'annually' : 'monthly';
+
+    // Create order in WHMCS
+    $order_result = BC_API::call('AddOrder', array(
+        'clientid'     => $whmcs_client_id,
+        'pid'          => array($whmcs_product_id),
+        'billingcycle' => array($whmcs_cycle),
+        'paymentmethod' => 'paypal',
+    ));
+
+    if (is_wp_error($order_result)) {
+        error_log('BriefSync: WHMCS AddOrder failed: ' . $order_result->get_error_message());
+        return $order_result;
+    }
+
+    // Get invoice ID from order
+    $invoice_id = isset($order_result['invoiceid']) ? intval($order_result['invoiceid']) : 0;
+    if (!$invoice_id) {
+        error_log('BriefSync: WHMCS AddOrder no invoiceid: ' . json_encode($order_result));
+        return new WP_Error('no_invoice', 'Order created but no invoice generated');
+    }
+
+    // Generate SSO URL to invoice payment page
+    $sso_result = BC_API::call('CreateSsoToken', array(
+        'client_id'   => $whmcs_client_id,
+        'destination' => 'viewinvoice',
+        'service_id'  => $invoice_id,
+    ));
+
+    if (!is_wp_error($sso_result) && isset($sso_result['redirect_url'])) {
+        return $sso_result['redirect_url'];
+    }
+
+    // Fallback: redirect to WHMCS client area invoice page
+    $whmcs_url = '';
+    if (class_exists('BC_Settings')) {
+        $whmcs_url = rtrim(BC_Settings::get('whmcs_url'), '/');
+    }
+    if ($whmcs_url) {
+        return $whmcs_url . '/viewinvoice.php?id=' . $invoice_id;
+    }
+
+    return new WP_Error('no_payment_url', 'Could not generate payment URL');
 }
 
 // ---------- Public Subscription Registration ----------
