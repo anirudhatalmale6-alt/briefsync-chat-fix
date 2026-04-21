@@ -1,0 +1,63 @@
+BRIEFSYNC CHAT FIX - DEPLOYMENT INSTRUCTIONS
+=============================================
+
+This package fixes:
+1. Duplicate greeting message ("Hi! How can we help you today?" showing twice)
+2. Email now required in prechat form (visitors must enter email before chatting)
+3. Smart AI responses (pricing, services, hours, getting started, support)
+4. Human handoff after 3 messages (business hours aware)
+
+FILES TO DEPLOY
+===============
+
+There are 5 files total. Upload them to your WordPress installation
+under wp-content/ keeping the folder structure:
+
+FILE 1: mu-plugins/cpp-livechat-rest.php
+  -> Upload to: wp-content/mu-plugins/cpp-livechat-rest.php
+  (This is the main chat REST API handler - fixes duplicate greeting on server side)
+
+FILE 2: plugins/client-portal-builder/assets/js/cpb-livechat-widget.js
+  -> Upload to: wp-content/plugins/client-portal-builder/assets/js/cpb-livechat-widget.js
+  (This is the chat widget - fixes duplicate greeting on client side, makes email required)
+
+FILE 3: plugins/client-portal-builder/includes/classes/CPP_Livechat_AI.php
+  -> Upload to: wp-content/plugins/client-portal-builder/includes/classes/CPP_Livechat_AI.php
+  (AI response engine with smart answers and human handoff logic)
+
+FILE 4: plugins/client-portal-builder/frontend/ajax-livechat.php
+  -> Upload to: wp-content/plugins/client-portal-builder/frontend/ajax-livechat.php
+  (Chat AJAX handlers for admin dashboard - list, get, send, close conversations)
+
+FILE 5: plugins/client-portal-builder/client-portal-builder.php
+  -> Upload to: wp-content/plugins/client-portal-builder/client-portal-builder.php
+  (Main plugin file with REST proxy route for all portal modules)
+
+HOW TO DEPLOY
+=============
+
+Option A - File Manager (cPanel):
+  1. Go to cPanel > File Manager
+  2. Navigate to public_html/wp-content/ (or your staging site path)
+  3. Upload each file to the correct location listed above
+  4. Overwrite existing files when prompted
+
+Option B - FTP:
+  1. Connect via FTP
+  2. Navigate to wp-content/
+  3. Upload the 5 files maintaining the folder structure
+
+TESTING
+=======
+
+After uploading:
+  1. Visit your site (not logged in, use incognito/private browser)
+  2. Click the chat bubble
+  3. You should see the prechat form asking for Name and Email (both required)
+  4. Enter name + email, click "Start Chat"
+  5. Greeting "Hi! How can we help you today?" should appear ONCE (not twice)
+  6. Type "what are your plans?" - should get pricing response
+  7. Type "what services do you offer?" - should get services response
+  8. After 3 messages, AI should suggest talking to a human
+  9. Go to WP Admin > Live Chat - you should see the conversation with visitor email
+  10. Click "Take Over" to reply as a human operator
